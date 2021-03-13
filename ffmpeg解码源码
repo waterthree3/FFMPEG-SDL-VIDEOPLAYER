@@ -1,0 +1,143 @@
+ffmpeg解码源码
+// ffmpegsdlprogram.cpp : 定义控制台应用程序的入口点。
+//
+#define __STDC_CONSTANT_MACROS //C++中定义
+#define _CRT_SECURE_NO_WARNINGS //解决scanf,fopen不安全引发的报错
+
+#include "stdafx.h"
+
+
+extern "C"
+{
+#include "libavcodec/avcodec.h" //调用ffmpeg中编解码的库
+#include "libavformat/avformat.h" //调用ffmpeg中封装格式处理的库
+#include "libswscale/swscale.h" //调用ffmpeg中视频像素数据格式转换的库
+};
+
+
+int main(int argc, char* argv[])
+{
+	AVFormatContext	*pFormatCtx; //宏定义   封装格式上下文结构体，保存了视频文件封装格式相关信息
+	int				i, videoindex;
+	AVCodecContext	*pCodecCtx;   // 编解码上下文结构体，保存了视频中编解码相关信息
+	AVCodec			*pCodec;      // 每种视频编解码器（例H.264解码器）对应一个该结构体
+	AVFrame	*pFrame, *pFrameYUV;  // 存储一帧解码后像素数据
+	uint8_t *out_buffer;
+	AVPacket *packet;			//存储一帧压缩编码数据
+	int y_size;
+	int ret, got_picture;
+	struct SwsContext *img_convert_ctx;	
+	//输入文件路径
+	char filepath[] = "Titanic.ts";
+
+	int frame_cnt;
+
+	av_register_all(); //初始化-注册所有组件
+	avformat_network_init(); //初始化网络
+	pFormatCtx = avformat_alloc_context(); //初始化  
+
+	if (avformat_open_input(&pFormatCtx, filepath, NULL, NULL) != 0) {
+		printf("Couldn't open input stream.\n");
+		return -1;
+	} //打开输入视频文件
+	if (avformat_find_stream_info(pFormatCtx, NULL)<0) {
+		printf("Couldn't find stream information.\n");
+		return -1;
+	} //获取视频文件信息
+	videoindex = -1;
+	for (i = 0; i<pFormatCtx->nb_streams; i++)
+		if (pFormatCtx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
+			videoindex = i;
+			break;
+		} //判断是视频流还是音频流
+	if (videoindex == -1) {
+		printf("Didn't find a video stream.\n");
+		return -1;
+	}
+
+	pCodecCtx = pFormatCtx->streams[videoindex]->codec; //AVCodecContext
+	pCodec = avcodec_find_decoder(pCodecCtx->codec_id); //查找解码器ID(avcodec)
+	if (pCodec == NULL) {
+		printf("Codec not found.\n");
+		return -1;
+	}
+	if (avcodec_open2(pCodecCtx, pCodec, NULL)<0) {
+		printf("Could not open codec.\n");
+		return -1;
+	} //判断是否能打开解码器
+
+	//FILE *fp = fopen("info.txt", "wb+"); //创立一个文件
+
+	//printf("shichang: %d\n", pFormatCtx->duration);
+	//printf("fengzhuanggeshi: %s\n", pFormatCtx->iformat->long_name);
+	//fprintf(fp, "guangao: %d * %d\n", pFormatCtx->streams[videoindex]->codec->width, pFormatCtx->streams[videoindex]->codec->height);
+	///*
+	//* 在此处添加输出视频信息的代码
+	//* 取自于pFormatCtx，使用fprintf()
+	//*/
+	//fclose(fp);
+
+	pFrame = av_frame_alloc();
+	pFrameYUV = av_frame_alloc();
+	out_buffer = (uint8_t *)av_malloc(avpicture_get_size(PIX_FMT_YUV420P, pCodecCtx->width, pCodecCtx->height));
+	avpicture_fill((AVPicture *)pFrameYUV, out_buffer, PIX_FMT_YUV420P, pCodecCtx->width, pCodecCtx->height);
+	packet = (AVPacket *)av_malloc(sizeof(AVPacket));
+	//Output Info-----------------------------
+	printf("--------------- File Information ----------------\n");
+	av_dump_format(pFormatCtx, 0, filepath, 0);
+	printf("-------------------------------------------------\n");
+	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt,
+		pCodecCtx->width, pCodecCtx->height, PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+
+	//printf("guan:%d\n", pCodecCtx->width);	显示图像宽高
+	//printf("gao:%d\n", pCodecCtx->height);
+
+	FILE *fp_264 = fopen("text264.h264", "wb+");
+	FILE *fp_yuv = fopen("textyuv.yuv", "wb+");
+
+	frame_cnt = 0;
+	while (av_read_frame(pFormatCtx, packet) >= 0) {
+		if (packet->stream_index == videoindex) {
+			/*
+			* 在此处添加输出H264码流的代码
+			* 取自于packet，使用fwrite()
+			*/
+			fwrite(packet->data, 1, packet->size, fp_264);
+
+			ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, packet);
+			if (ret < 0) {
+				printf("Decode Error.\n");
+				return -1;
+			}
+			if (got_picture) {
+				sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height,
+					pFrameYUV->data, pFrameYUV->linesize);
+				printf("Decoded frame index: %d\n", frame_cnt);
+
+				fwrite(pFrameYUV->data[0], 1, pCodecCtx->width * pCodecCtx->height, fp_yuv); //输出Y数据，每次输出一个，数据量为宽×高
+				fwrite(pFrameYUV->data[1], 1, pCodecCtx->width * pCodecCtx->height / 4, fp_yuv);
+				fwrite(pFrameYUV->data[2], 1, pCodecCtx->width * pCodecCtx->height / 4, fp_yuv);
+				/*
+				* 在此处添加输出YUV的代码
+				* 取自于pFrameYUV，使用fwrite()
+				*/
+
+				frame_cnt++;
+
+			}
+		}
+		av_free_packet(packet);
+	}
+
+	fclose(fp_264);
+	fclose(fp_yuv);
+
+	sws_freeContext(img_convert_ctx);
+
+	av_frame_free(&pFrameYUV);
+	av_frame_free(&pFrame);
+	avcodec_close(pCodecCtx);
+	avformat_close_input(&pFormatCtx);
+	system("pause");
+	return 0;
+}
